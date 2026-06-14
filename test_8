@@ -5,7 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
 
-# --- YOUR WORKING EMBEDDED DATA SNIPPET ---
+
 RAW_DATA_SNIPPET = [
     {
         "@type": "WebSite",
@@ -101,7 +101,7 @@ def extract_to_excel_with_coordinates():
     }
     all_stores = []
 
-    # Initialize the automatic map lookup agent
+    
     geolocator = Nominatim(user_agent="delhi_haldiram_scraper")
 
     for idx, url in enumerate(store_urls, 1):
@@ -114,7 +114,7 @@ def extract_to_excel_with_coordinates():
         except Exception:
             soup = None
 
-        # Format clean display addresses from link components
+        
         street_address = (
             url_segment.replace("haldiram-s-", "")
             .replace("-restaurants", "")
@@ -123,7 +123,7 @@ def extract_to_excel_with_coordinates():
         )
         street_address = re.sub(r"\d{4,7}$", "", street_address).strip()
 
-        # Isolate true pin codes from web text
+        
         zip_code = "110001"
         if soup:
             page_text = soup.get_text(" ")
@@ -131,13 +131,13 @@ def extract_to_excel_with_coordinates():
             if zip_match:
                 zip_code = zip_match.group(0)
 
-        # AUTOMATIC LOOKUP: Fetch precise Coordinates using Geopy
+        
         latitude, longitude = "", ""
         try:
             lookup_query = f"{street_address}, New Delhi, Delhi, {zip_code}, India"
             location_data = geolocator.geocode(lookup_query, timeout=5)
 
-            # Fallback to a broader query if the hyper-specific address string fails
+           
             if not location_data:
                 fallback_query = f"{street_address}, New Delhi, India"
                 location_data = geolocator.geocode(fallback_query, timeout=5)
@@ -162,10 +162,8 @@ def extract_to_excel_with_coordinates():
                 "Latitude": latitude,
             }
         )
-        time.sleep(1.5)  # Slight buffer to respect map lookup api rate limits
-
-    # Save out to your Excel file sheet destination
-    df = pd.DataFrame(all_stores)
+        time.sleep(1.5)  
+    
     with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Delhi Locations", index=False)
 
