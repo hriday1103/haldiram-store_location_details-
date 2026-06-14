@@ -1,0 +1,180 @@
+import re
+import time
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from geopy.geocoders import Nominatim
+
+# --- YOUR WORKING EMBEDDED DATA SNIPPET ---
+RAW_DATA_SNIPPET = [
+    {
+        "@type": "WebSite",
+        "url": "https://hrstores.haldiram.com/",
+        "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://hrstores.haldiram.com/?search={search_term_string}",
+            "query-input": "required name=search_term_string",
+        },
+        "@context": "https://schema.org",
+    },
+    {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": 1,
+                "item": {"@id": "https://hrstores.haldiram.com/", "name": "Home"},
+            },
+            {
+                "@type": "ListItem",
+                "position": 2,
+                "item": {
+                    "@id": "https://hrstores.haldiram.com/location/delhi",
+                    "name": "delhi",
+                },
+            },
+            {
+                "@type": "ListItem",
+                "position": 3,
+                "item": {
+                    "@id": "https://hrstores.haldiram.com/location/delhi/new-delhi",
+                    "name": "new-delhi",
+                },
+            },
+        ],
+        "@context": "https://schema.org",
+    },
+    {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": 1,
+                "url": "https://hrstores.haldiram.com/haldiram-s-connaught-place-restaurants-connaught-place-new-delhi-395055/Home",
+            },
+            {
+                "@type": "ListItem",
+                "position": 2,
+                "url": "https://hrstores.haldiram.com/haldiram-s-janpath-connaught-place-restaurants-connaught-place-new-delhi-394782/Home",
+            },
+            {
+                "@type": "ListItem",
+                "position": 3,
+                "url": "https://hrstores.haldiram.com/haldiram-s-kotla-restaurants-wazir-nagar-new-delhi-400321/Home",
+            },
+            {
+                "@type": "ListItem",
+                "position": 4,
+                "url": "https://hrstores.haldiram.com/haldiram-s-karol-bagh-restaurants-karol-bagh-new-delhi-394769/Home",
+            },
+            {
+                "@type": "ListItem",
+                "position": 5,
+                "url": "https://hrstores.haldiram.com/haldiram-s-chandni-chowk-restaurants-chandni-chowk-new-delhi-394831/Home",
+            },
+            {
+                "@type": "ListItem",
+                "position": 6,
+                "url": "https://hrstores.haldiram.com/haldiram-s-pandara-road-restaurants-man-singh-road-area-new-delhi-394771/Home",
+            },
+        ],
+    },
+]
+
+
+def extract_to_excel_with_coordinates():
+    excel_filename = "Haldirams_New_Delhi_Locations.xlsx"
+    store_urls = []
+
+    for block in RAW_DATA_SNIPPET:
+        if block.get("@type") == "ItemList":
+            items = block.get("itemListElement", [])
+            for item in items:
+                if "url" in item:
+                    store_urls.append(item["url"])
+
+    print(f"Processing {len(store_urls)} store web entries...")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    all_stores = []
+
+    # Initialize the automatic map lookup agent
+    geolocator = Nominatim(user_agent="delhi_haldiram_scraper")
+
+    for idx, url in enumerate(store_urls, 1):
+        url_segment = url.split("/")[-2]
+        print(f"[{idx}/{len(store_urls)}] Harvesting structural metrics: {url_segment}")
+
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            soup = BeautifulSoup(res.text, "html.parser") if res.status_code == 200 else None
+        except Exception:
+            soup = None
+
+        # Format clean display addresses from link components
+        street_address = (
+            url_segment.replace("haldiram-s-", "")
+            .replace("-restaurants", "")
+            .replace("-", " ")
+            .title()
+        )
+        street_address = re.sub(r"\d{4,7}$", "", street_address).strip()
+
+        # Isolate true pin codes from web text
+        zip_code = "110001"
+        if soup:
+            page_text = soup.get_text(" ")
+            zip_match = re.search(r"\b110\d{3}\b", page_text)
+            if zip_match:
+                zip_code = zip_match.group(0)
+
+        # AUTOMATIC LOOKUP: Fetch precise Coordinates using Geopy
+        latitude, longitude = "", ""
+        try:
+            lookup_query = f"{street_address}, New Delhi, Delhi, {zip_code}, India"
+            location_data = geolocator.geocode(lookup_query, timeout=5)
+
+            # Fallback to a broader query if the hyper-specific address string fails
+            if not location_data:
+                fallback_query = f"{street_address}, New Delhi, India"
+                location_data = geolocator.geocode(fallback_query, timeout=5)
+
+            if location_data:
+                latitude = location_data.latitude
+                longitude = location_data.longitude
+                print(f"   📍 Found Coordinates: Lat {latitude}, Long {longitude}")
+            else:
+                print(f"   ⚠️ Coordinates lookup missed for: {street_address}")
+        except Exception:
+            print(f"   ⚠️ Map server busy, moving to next row.")
+
+        all_stores.append(
+            {
+                "Brand Name": "Haldiram's",
+                "Street Address": street_address,
+                "City": "New Delhi",
+                "State": "Delhi",
+                "Zip Code": zip_code,
+                "Longitude": longitude,
+                "Latitude": latitude,
+            }
+        )
+        time.sleep(1.5)  # Slight buffer to respect map lookup api rate limits
+
+    # Save out to your Excel file sheet destination
+    df = pd.DataFrame(all_stores)
+    with pd.ExcelWriter(excel_filename, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Delhi Locations", index=False)
+
+    print(
+        f"\n🎉 ALL SET! File built with map coordinates: '{excel_filename}'"
+    )
+    print("\n--- Final Filled Excel Sheet Preview ---")
+    print(df.to_string(index=False))
+
+
+if __name__ == "__main__":
+    extract_to_excel_with_coordinates()
